@@ -75,14 +75,8 @@ header{display:flex;align-items:center;justify-content:space-between;padding:16p
 input[type=range]{-webkit-appearance:none;height:2px;background:#333;outline:none;border-radius:1px;}
 input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;height:11px;border-radius:50%;background:var(--gold);cursor:pointer;}
 #tempo-display{font-family:'IBM Plex Mono',monospace;font-size:0.72rem;color:var(--gold);min-width:44px;}
-.mix-toggle{display:flex;align-items:center;gap:5px;font-family:'IBM Plex Mono',monospace;font-size:0.62rem;color:var(--muted);cursor:pointer;}
-.mix-toggle input{accent-color:var(--gold);}
-.melody-cycle-btn{background:none;border:1px solid #333;color:var(--muted);font-family:'IBM Plex Mono',monospace;font-size:0.58rem;letter-spacing:0.08em;padding:3px 8px;cursor:pointer;border-radius:2px;transition:all 0.2s;white-space:nowrap;}
-.melody-cycle-btn.mode-original{border-color:var(--gold);color:var(--gold);}
-.melody-cycle-btn.mode-improv{border-color:#7a6abf;color:#a090df;}
-.melody-cycle-btn.mode-off{border-color:#333;color:#444;}
-.vocal-btn{background:none;border:1px solid #333;color:var(--muted);font-family:'IBM Plex Mono',monospace;font-size:0.58rem;padding:3px 8px;cursor:pointer;border-radius:2px;transition:all 0.2s;white-space:nowrap;}
-.vocal-btn.active{border-color:#c86dd4;color:#e090f0;background:rgba(200,109,212,0.1);}
+.instrument-select{background:#111116;border:1px solid #2a2a22;color:var(--muted);font-family:'IBM Plex Mono',monospace;font-size:0.62rem;padding:3px 8px;outline:none;cursor:pointer;border-radius:2px;}
+.instrument-select option{background:#111116;}
 .sidebar{background:#0a0a0e;border-left:1px solid #1a1a14;overflow-y:auto;display:flex;flex-direction:column;}
 .sidebar-tabs{display:flex;border-bottom:1px solid #1a1a14;flex-shrink:0;}
 .sidebar-tab{flex:1;background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-family:'IBM Plex Mono',monospace;font-size:0.6rem;letter-spacing:0.1em;text-transform:uppercase;padding:12px 2px;cursor:pointer;transition:all 0.2s;}
@@ -208,6 +202,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
         <option>Ab</option><option>A</option><option>Bb</option><option>B</option>
       </select>
       <button id="search-btn">Search</button>
+      <button id="random-btn" title="Load a random standard" style="background:none;border:1px solid #2a2a22;color:var(--muted);font-family:'IBM Plex Mono',monospace;font-size:0.72rem;padding:0 14px;cursor:pointer;border-radius:2px;transition:all 0.2s;white-space:nowrap;flex-shrink:0;" onmouseover="this.style.borderColor='var(--gold)';this.style.color='var(--gold)'" onmouseout="this.style.borderColor='#2a2a22';this.style.color='var(--muted)'">&#9861; Random</button>
     </div>
     <div class="search-results" id="search-results"></div>
   </div>
@@ -245,12 +240,15 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;heigh
         <input type="range" id="volume-slider" min="0" max="1" step="0.05" value="0.7" style="width:60px">
       </div>
       <div class="transport-divider"></div>
-      <span class="ctrl-label">MIX</span>
-      <label class="mix-toggle" id="toggle-bass"><input type="checkbox" checked> Bass</label>
-      <label class="mix-toggle" id="toggle-piano"><input type="checkbox" checked> Piano</label>
-      <label class="mix-toggle" id="toggle-drums"><input type="checkbox" checked> Drums</label>
-      <button class="melody-cycle-btn mode-original" id="melody-cycle-btn">&#9834; Original</button>
-      <button class="vocal-btn" id="vocal-btn" title="Vocal harmonizer">&#127908; Vocal</button>
+      <span class="ctrl-label">SOUND</span>
+      <select class="instrument-select" id="instrument-select">
+        <option value="rhodes">Rhodes</option>
+        <option value="piano">Piano</option>
+        <option value="strings">Strings</option>
+        <option value="vibraphone">Vibraphone</option>
+        <option value="organ">Organ</option>
+        <option value="sine">Sine</option>
+      </select>
     </div>
   </div>
 
@@ -333,11 +331,9 @@ const S = {
   parsedMidi: null,
   midiB64: null,
   midiLoopTimer: null,
-  melodyMode: 'original',
-  vocalMode: false,
+  instrument: 'rhodes',  // 'rhodes' | 'vibraphone' | 'organ' | 'sine'
   tempo: 120,
   volume: 0.7,
-  mix: { bass:true, piano:true, drums:true },
   beatCount: 0,
   currentMeasure: 0,
   currentBeat: 0,
@@ -722,7 +718,7 @@ function scheduleScoreMelody(measure,t0,spb){
     const t=t0+(n.offset/bu)*spb;
     const dur=Math.min((n.duration/bu)*spb*0.88,bpm*spb*0.95);
     if(dur<0.03)continue;
-    playTone(freq,t,dur,'sine',0.22,(Math.random()-0.5)*4);
+    playHarmonized(freq,t,dur,measure.chord);
   }
 }
 
@@ -768,136 +764,210 @@ function scheduleImprovMelody(measure,t0,spb){
   else{for(let b=0;b<bpm;b++){const f=pickImprovNote(measure.chord,b);if(f)playTone(f,t0+b*spb,b%2===0?spb*0.78:spb*0.42,'sine',b%2===0?0.19:0.13);}}
 }
 
-// ════════════════════════════════════════════════════════════
-//  Vocal Harmonizer (Safari-safe: Web Speech + oscillators)
-// ════════════════════════════════════════════════════════════
-const SCAT={long:['doo','dah','bah','daah'],short:['da','ba','dit','duh'],medium:['doo','bah','da','doo']};
-function scatSyllable(dur){if(dur>=1.5)return SCAT.long[Math.floor(Math.random()*4)];if(dur<=0.5)return SCAT.short[Math.floor(Math.random()*4)];return SCAT.medium[Math.floor(Math.random()*4)];}
 
+
+// ════════════════════════════════════════════════════════════
+//  Instrument engine
+//  playNote(freq, t, dur, gain, isBass) — dispatches to current instrument
+//  Harmonizer: plays lead + 3 harmony voices all using same instrument
+// ════════════════════════════════════════════════════════════
+
+// ── Rhodes (FM tine) ─────────────────────────────────────────────────────────
+function playRhodes(freq, t, dur, gain, isBass) {
+  const ctx=S.audioCtx, mod=ctx.createOscillator(), modG=ctx.createGain();
+  const car=ctx.createOscillator(), env=ctx.createGain(), eq=ctx.createBiquadFilter();
+  mod.type='sine'; car.type='sine';
+  mod.frequency.value=freq*(isBass?1.0:3.5);
+  modG.gain.value=freq*(isBass?0.8:1.8);
+  car.frequency.value=freq;
+  eq.type=isBass?'lowpass':'peaking'; eq.frequency.value=isBass?600:2800;
+  eq.gain.value=isBass?0:3.5; eq.Q.value=2;
+  const sus=Math.max(gain*(isBass?0.55:0.35),0.001);
+  env.gain.setValueAtTime(0,t); env.gain.linearRampToValueAtTime(gain,t+0.003);
+  env.gain.exponentialRampToValueAtTime(sus,t+0.003+dur*0.28);
+  env.gain.exponentialRampToValueAtTime(0.001,t+dur*0.95);
+  mod.connect(modG); modG.connect(car.frequency);
+  car.connect(eq); eq.connect(env); env.connect(S.masterGain);
+  mod.start(t); mod.stop(t+dur+0.05); car.start(t); car.stop(t+dur+0.05);
+}
+
+// ── Vibraphone (sine + tremolo, metallic decay) ───────────────────────────────
+function playVibraphone(freq, t, dur, gain, isBass) {
+  const ctx=S.audioCtx, osc=ctx.createOscillator(), env=ctx.createGain();
+  const lfo=ctx.createOscillator(), lfoG=ctx.createGain();
+  osc.type='sine'; osc.frequency.value=freq;
+  // Tremolo (vibe motor)
+  lfo.frequency.value=isBass?0:5.5; lfoG.gain.value=gain*0.18;
+  lfo.connect(lfoG); lfoG.connect(env.gain);
+  // Fast attack, long metallic decay
+  env.gain.setValueAtTime(0,t); env.gain.linearRampToValueAtTime(gain,t+0.002);
+  env.gain.exponentialRampToValueAtTime(Math.max(gain*0.25,0.001),t+dur*0.35);
+  env.gain.exponentialRampToValueAtTime(0.001,t+Math.min(dur*1.4,3.5));
+  osc.connect(env); env.connect(S.masterGain);
+  osc.start(t); lfo.start(t);
+  const stop=t+Math.min(dur*1.4,3.5)+0.05;
+  osc.stop(stop); lfo.stop(stop);
+}
+
+// ── Organ (Hammond-ish: 3 drawbars as harmonics) ─────────────────────────────
+function playOrgan(freq, t, dur, gain, isBass) {
+  const ctx=S.audioCtx;
+  const drawbars=[1,2,3]; // 8', 4', 2-2/3' equivalent
+  const weights=[0.5,0.3,0.2];
+  drawbars.forEach((h,i)=>{
+    const osc=ctx.createOscillator(), env=ctx.createGain();
+    osc.type='sine'; osc.frequency.value=freq*h;
+    // Organ: instant on/off (no swell for simplicity)
+    env.gain.setValueAtTime(0,t); env.gain.linearRampToValueAtTime(gain*weights[i],t+0.008);
+    env.gain.setValueAtTime(gain*weights[i],t+dur-0.015);
+    env.gain.linearRampToValueAtTime(0.001,t+dur);
+    osc.connect(env); env.connect(S.masterGain);
+    osc.start(t); osc.stop(t+dur+0.02);
+  });
+}
+
+// ── Clean sine (for minimal / debug) ─────────────────────────────────────────
+function playSine(freq, t, dur, gain) {
+  const ctx=S.audioCtx, osc=ctx.createOscillator(), env=ctx.createGain();
+  osc.type='sine'; osc.frequency.value=freq;
+  env.gain.setValueAtTime(0,t); env.gain.linearRampToValueAtTime(gain,t+0.008);
+  env.gain.exponentialRampToValueAtTime(0.001,t+dur*0.92);
+  osc.connect(env); env.connect(S.masterGain); osc.start(t); osc.stop(t+dur+0.02);
+}
+
+
+// ── Acoustic piano (bright FM + hammer noise transient) ──────────────────────
+function playPiano(freq, t, dur, gain, isBass) {
+  const ctx=S.audioCtx;
+  // Bright inharmonic string: two slightly detuned sines (unison shimmer)
+  [0, 5].forEach((detCents, di) => {
+    const osc=ctx.createOscillator(), env=ctx.createGain(), filt=ctx.createBiquadFilter();
+    osc.type='sine';
+    osc.frequency.value=freq*Math.pow(2,detCents/1200);
+    filt.type='peaking'; filt.frequency.value=isBass?400:3500; filt.gain.value=isBass?-3:5; filt.Q.value=1.5;
+    const pk=gain*(di===0?1.0:0.35);
+    const decay=isBass?dur*0.55:Math.min(dur*0.9,2.5);
+    env.gain.setValueAtTime(0,t);
+    env.gain.linearRampToValueAtTime(pk,t+0.003);
+    env.gain.exponentialRampToValueAtTime(Math.max(pk*0.18,0.001),t+0.003+decay*0.4);
+    env.gain.exponentialRampToValueAtTime(0.001,t+decay);
+    osc.connect(filt); filt.connect(env); env.connect(S.masterGain);
+    osc.start(t); osc.stop(t+decay+0.05);
+  });
+  // Soft hammer click
+  const buf=ctx.createBuffer(1,Math.ceil(ctx.sampleRate*0.018),ctx.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*Math.exp(-i/(ctx.sampleRate*0.008));
+  const src=ctx.createBufferSource(),hp=ctx.createBiquadFilter(),eg=ctx.createGain();
+  hp.type='highpass'; hp.frequency.value=2000;
+  src.buffer=buf; eg.gain.value=gain*0.12;
+  src.connect(hp); hp.connect(eg); eg.connect(S.masterGain); src.start(t);
+}
+
+// ── Strings (bowed — slow attack, rich with gentle chorus shimmer) ────────────
+function playStrings(freq, t, dur, gain, isBass) {
+  const ctx=S.audioCtx;
+  // Three slightly detuned sawtooths for ensemble width
+  const detunes=[0,-8,8];
+  const mainGain=new GainNode(ctx,{gain:0});
+  mainGain.connect(S.masterGain);
+  detunes.forEach((dt,i)=>{
+    const osc=ctx.createOscillator(), filt=ctx.createBiquadFilter(), g=ctx.createGain();
+    osc.type='sawtooth'; osc.frequency.value=freq; osc.detune.value=dt;
+    filt.type='lowpass'; filt.frequency.value=isBass?800:4000; filt.Q.value=0.7;
+    g.gain.value=i===0?0.55:0.22;
+    osc.connect(filt); filt.connect(g); g.connect(mainGain);
+    osc.start(t); osc.stop(t+dur+0.3);
+  });
+  // Slow bow attack, hold, gentle release
+  const attack=Math.min(dur*0.25,0.18);
+  const release=Math.min(dur*0.15,0.12);
+  mainGain.gain.setValueAtTime(0,t);
+  mainGain.gain.linearRampToValueAtTime(gain,t+attack);
+  mainGain.gain.setValueAtTime(gain,t+dur-release);
+  mainGain.gain.linearRampToValueAtTime(0.001,t+dur+0.02);
+}
+
+// ── Dispatcher ────────────────────────────────────────────────────────────────
+function playNote(freq, t, dur, gain, isBass) {
+  switch(S.instrument){
+    case 'piano':      playPiano(freq,t,dur,gain,isBass);       break;
+    case 'strings':    playStrings(freq,t,dur,gain,isBass);     break;
+    case 'vibraphone': playVibraphone(freq,t,dur,gain,isBass);  break;
+    case 'organ':      playOrgan(freq,t,dur,gain,isBass);       break;
+    case 'sine':       playSine(freq,t,dur,gain);                break;
+    default:           playRhodes(freq,t,dur,gain,isBass);       break;
+  }
+}
+
+// ── Harmony voices (smart voice leading, same instrument as lead) ────────────
 const HARM_VOICES=[null,null,null];
+
 function midiFromFreq(f){return Math.round(69+12*Math.log2(f/440));}
 function freqFromMidi(m){return 440*Math.pow(2,(m-69)/12);}
 
 function chordMidiPool(chordStr,centerMidi){
   const{semi,quality}=parseChord(chordStr);
   const ivs=VOICINGS[quality]||[0,4,7,10],pool=[];
-  for(let oct=-1;oct<=2;oct++)for(const iv of ivs){const midi=12*(Math.floor(centerMidi/12)+oct)+semi+iv;if(midi>=36&&midi<=96)pool.push(midi);}
+  for(let oct=-1;oct<=2;oct++)for(const iv of ivs){
+    const midi=12*(Math.floor(centerMidi/12)+oct)+semi+iv;
+    if(midi>=36&&midi<=96)pool.push(midi);
+  }
   return[...new Set(pool)].sort((a,b)=>a-b);
 }
 function nearestChordTone(pool,lastMidi,melMidi,vi){
   const off=[0,2,4][vi]||0,shifted=[...pool.slice(off),...pool.slice(0,off)];
   let best=shifted[0],bd=999;
-  for(const p of shifted){if(Math.abs(p-melMidi)<2)continue;const d=Math.abs(p-(lastMidi??(melMidi+4+vi*3)));if(d<bd){best=p;bd=d;}}
+  for(const p of shifted){
+    if(Math.abs(p-melMidi)<2) continue;
+    const d=Math.abs(p-(lastMidi??(melMidi+4+vi*3)));
+    if(d<bd){best=p;bd=d;}
+  }
   return best;
 }
 
-const _tts=window.speechSynthesis;
-let _ttsVoices=[];
-function loadVoices(){_ttsVoices=_tts.getVoices().filter(v=>v.lang.startsWith('en'));if(!_ttsVoices.length)_ttsVoices=_tts.getVoices();}
-if(_tts){_tts.onvoiceschanged=loadVoices;loadVoices();}
-
-function speakSyllable(text){
-  if(!_tts||!S.vocalMode) return;
-  const u=new SpeechSynthesisUtterance(text);
-  u.rate=1.9; u.pitch=1.0; u.volume=0.45;
-  if(_ttsVoices.length) u.voice=_ttsVoices[0];
-  _tts.cancel(); _tts.speak(u);
-}
-
-function playVocalOsc(freq,t,dur,gain,isLead){
-  if(!S.audioCtx) return;
-  const ctx=S.audioCtx,osc=ctx.createOscillator(),env=ctx.createGain(),filt=ctx.createBiquadFilter();
-  osc.type=isLead?'sawtooth':'sine';
-  osc.frequency.value=freq;
-  if(isLead){
-    const lfo=ctx.createOscillator(),lg=ctx.createGain();
-    lfo.frequency.value=5.2; lg.gain.value=freq*0.012;
-    lfo.connect(lg); lg.connect(osc.frequency);
-    lfo.start(t); lfo.stop(t+dur+0.1);
-  }
-  filt.type=isLead?'bandpass':'lowpass';
-  filt.frequency.value=isLead?freq*2.2:4000; filt.Q.value=isLead?3:1;
-  env.gain.setValueAtTime(0,t); env.gain.linearRampToValueAtTime(gain,t+0.015);
-  env.gain.setValueAtTime(gain,t+dur*0.75); env.gain.exponentialRampToValueAtTime(0.001,t+dur*0.97);
-  osc.connect(filt); filt.connect(env); env.connect(S.masterGain);
-  osc.start(t); osc.stop(t+dur+0.05);
-}
-
-function scheduleHarmonizerNote(noteObj,t0,spb,chordStr){
-  if(noteObj.pitch==='rest') return;
-  const match=noteObj.pitch.match(/^([A-G][#b]?)(\d)$/); if(!match) return;
-  const freq=NOTE_FREQ[match[1]+match[2]]; if(!freq) return;
-  const bu=4/(parseInt((S.current?.time_sig||'4/4').split('/')[1])||4);
-  const t=t0+(noteObj.offset/bu)*spb;
-  const dur=Math.max(0.08,(noteObj.duration/bu)*spb*0.88);
-  const lyric=noteObj.lyric||scatSyllable(noteObj.duration);
-  // Lead oscillator
-  playVocalOsc(freq,t,dur,0.18,true);
-  // Speak syllable (best-effort timing)
-  const ms=Math.max(0,(t-S.audioCtx.currentTime)*1000-120);
-  setTimeout(()=>{if(S.vocalMode)speakSyllable(lyric);},ms);
-  // 3 harmony voices — smart voice leading to chord tones
+// Plays lead + 3 harmony voices all through playNote
+function playHarmonized(freq, t, dur, chordStr) {
+  // Lead
+  playNote(freq, t, dur, 0.18);
+  // Harmony voices
   const melMidi=midiFromFreq(freq);
   const pool=chordMidiPool(chordStr,melMidi);
   for(let vi=0;vi<3;vi++){
     const hm=nearestChordTone(pool,HARM_VOICES[vi],melMidi,vi);
     HARM_VOICES[vi]=hm;
-    const hf=freqFromMidi(hm)*(1+(vi-1)*3/1200); // slight detune per voice
-    playVocalOsc(hf,t+vi*0.008,dur,0.10-vi*0.02,false);
+    const hf=freqFromMidi(hm)*(1+(vi-1)*3/1200);
+    playNote(hf, t+vi*0.008, dur, 0.10-vi*0.02);
   }
-}
-
-function scheduleHarmonizerMeasure(measure,t0,spb){
-  if(!S.audioCtx||!S.masterGain) return;
-  const notes=(measure.melody||[]).filter(n=>n.pitch!=='rest');
-  if(!notes.length) return;
-  notes.forEach(n=>scheduleHarmonizerNote(n,t0,spb,measure.chord));
 }
 
 function resetHarmonizer(){
   HARM_VOICES[0]=HARM_VOICES[1]=HARM_VOICES[2]=null;
-  IMPROV_STATE.lastStep=48; IMPROV_STATE.dir=1;
-  if(_tts) _tts.cancel();
 }
 
-// ════════════════════════════════════════════════════════════
-//  scheduleBeat
-// ════════════════════════════════════════════════════════════
+
 function scheduleBeat(t){
   if(!S.current?.measures?.length) return;
   const ms=S.current.measures,spb=60/S.tempo;
   const beat=S.beatCount%4,mi=Math.floor(S.beatCount/4)%ms.length,m=ms[mi];
   S.currentBeat=beat; S.currentMeasure=mi;
 
-  if(S.mix.bass&&!S.midiPlaying) playTone(bassNote(mi,beat),t,spb*0.88,'sawtooth',0.22);
-
-  if(S.mix.piano&&!S.midiPlaying){
-    if(beat===1||beat===3){const fs=chordFreqs(m.chord,3);fs.forEach((f,i)=>playTone(f,t+(Math.random()-0.5)*0.015+i*0.007,spb*0.55,'triangle',0.12));}
-    if((beat===0||beat===2)&&Math.random()>0.55)chordFreqs(m.chord,3).slice(1).forEach((f,i)=>playTone(f,t+spb*0.5+i*0.005,spb*0.28,'triangle',0.07));
-  }
-
-  if(S.melodyMode!=='off'&&!S.midiPlaying){
+  if(!S.midiPlaying){
+    playNote(bassNote(mi,beat),t,spb*0.82,0.28,true);
+    if(beat===1||beat===3){const fs=chordFreqs(m.chord,3);fs.forEach((f,i)=>playNote(f,t+(Math.random()-0.5)*0.012+i*0.006,spb*0.48,0.10));}
+    if((beat===0||beat===2)&&Math.random()>0.60)chordFreqs(m.chord,3).slice(1,4).forEach((f,i)=>playNote(f,t+spb*0.5+i*0.005,spb*0.22,0.055));
+    playBrush(t,0.32,0.045,6000);
+    if(beat===1||beat===3) playBrush(t+spb*(2/3),0.18,0.032,6500);
+    if(beat===0) playKick(t);
+    if(beat===2) playSnare(t);
+    if(Math.random()>0.78&&(beat===1||beat===3)) playBrush(t+spb*0.28,0.06,0.025,5000);
     if(beat===0){
-      if(S.vocalMode&&S.current?.has_melody&&m.melody?.length){
-        scheduleHarmonizerMeasure(m,t,spb);
-      } else if(S.melodyMode==='improv'){
-        scheduleImprovMelody(m,t,spb);
-      } else {
-        if(S.current?.has_melody&&m.melody?.length) scheduleScoreMelody(m,t,spb);
-        else scheduleImprovMelody(m,t,spb);
-      }
-    } else if(!S.vocalMode&&S.melodyMode==='original'&&!(S.current?.has_melody&&m.melody?.length)){
+      if(S.current?.has_melody&&m.melody?.length) scheduleScoreMelody(m,t,spb);
+      else scheduleImprovMelody(m,t,spb);
+    } else if(!(S.current?.has_melody&&m.melody?.length)){
       const f=nextMelodyNote(m.chord,beat);
-      if(f){const dur=beat%2===0?spb*0.82:spb*0.45;playTone(f,t,dur,'sine',beat%2===0?0.20:0.13);}
+      if(f) playNote(f,t,beat%2===0?spb*0.78:spb*0.42,beat%2===0?0.16:0.10);
     }
-  }
-
-  if(S.mix.drums){
-    playNoise(t,0.35,0.07,7000);
-    if(beat===1||beat===3){playNoise(t+spb*(2/3),0.2,0.05,7000);playNoise(t,0.06,0.10,9000);}
-    if(beat===0){playTone(100,t,0.30,'sine',0.5);playTone(60,t+0.02,0.28,'sine',0.3);}
-    if(beat===2)playNoise(t,0.12,0.28,300);
-    if(Math.random()>0.72&&(beat===1||beat===3))playNoise(t+spb*0.3,0.08,0.10,500);
   }
 }
 
@@ -1004,7 +1074,6 @@ function startPlayback(){
 function stopPlayback(){
   S.isPlaying=false; S.midiPlaying=false;
   clearInterval(S.schedulerTimer); stopToneParts();
-  if(_tts) _tts.cancel();
   document.getElementById('btn-play').classList.remove('active');
   document.querySelectorAll('.beat-dot').forEach(d=>d.classList.remove('on'));
   document.querySelectorAll('.measure-cell').forEach(c=>c.classList.remove('playing'));
@@ -1056,27 +1125,19 @@ document.getElementById('btn-play').addEventListener('click',()=>{if(S.isPlaying
 document.getElementById('btn-stop').addEventListener('click',stopPlayback);
 document.getElementById('tempo-slider').addEventListener('input',e=>{S.tempo=parseInt(e.target.value);document.getElementById('tempo-display').textContent=S.tempo;});
 document.getElementById('volume-slider').addEventListener('input',e=>{S.volume=parseFloat(e.target.value);if(S.masterGain)S.masterGain.gain.value=S.volume;});
-['bass','piano','drums'].forEach(ch=>document.getElementById('toggle-'+ch).addEventListener('change',e=>{S.mix[ch]=e.target.checked;}));
-
-const MELODY_MODES=[{key:'original',label:'&#9834; Original',cls:'mode-original'},{key:'improv',label:'&#9834; Improv',cls:'mode-improv'},{key:'off',label:'&#9834; Off',cls:'mode-off'}];
-function updateMelodyCycleBtn(){const btn=document.getElementById('melody-cycle-btn');const mode=MELODY_MODES.find(x=>x.key===S.melodyMode)||MELODY_MODES[0];btn.innerHTML=mode.label;btn.className='melody-cycle-btn '+mode.cls;}
-document.getElementById('melody-cycle-btn').addEventListener('click',()=>{
-  const idx=MELODY_MODES.findIndex(x=>x.key===S.melodyMode);
-  S.melodyMode=MELODY_MODES[(idx+1)%MELODY_MODES.length].key;
-  if(S.melodyMode==='improv'){IMPROV_STATE.lastStep=48;IMPROV_STATE.dir=1;}
-  if(S.melodyMode==='off'&&S.vocalMode){S.vocalMode=false;document.getElementById('vocal-btn').classList.remove('active');if(_tts)_tts.cancel();}
-  updateMelodyCycleBtn();
-});
-document.getElementById('vocal-btn').addEventListener('click',()=>{
-  if(!S.current){showToast('Load a standard first');return;}
-  S.vocalMode=!S.vocalMode;
-  document.getElementById('vocal-btn').classList.toggle('active',S.vocalMode);
-  if(S.vocalMode&&S.melodyMode==='off'){S.melodyMode='original';updateMelodyCycleBtn();}
-  if(!S.vocalMode&&_tts)_tts.cancel();
+document.getElementById('instrument-select').addEventListener('change',e=>{
+  S.instrument=e.target.value;
   resetHarmonizer();
-  showToast(S.vocalMode?'\uD83C\uDFA4 Vocal harmonizer on':'Vocal harmonizer off');
 });
 
+async function randomStandard() {
+  const lib=await loadLibrary();
+  if(!lib) return;
+  const ids=Object.keys(lib);
+  const id=ids[Math.floor(Math.random()*ids.length)];
+  loadStandard(id);
+}
+document.getElementById('random-btn').addEventListener('click', randomStandard);
 document.querySelectorAll('.sidebar-tab').forEach(tab=>tab.addEventListener('click',()=>switchTab(tab.dataset.panel)));
 document.getElementById('settings-btn').addEventListener('click',()=>{
   const el=document.getElementById('about-lib-count');
