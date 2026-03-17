@@ -774,118 +774,156 @@ function scheduleImprovMelody(measure,t0,spb){
 
 // ── Rhodes (FM tine) ─────────────────────────────────────────────────────────
 function playRhodes(freq, t, dur, gain, isBass) {
-  const ctx=S.audioCtx, mod=ctx.createOscillator(), modG=ctx.createGain();
-  const car=ctx.createOscillator(), env=ctx.createGain(), eq=ctx.createBiquadFilter();
+  const ctx=S.audioCtx;
+  const mod=ctx.createOscillator(), modG=ctx.createGain();
+  const car=ctx.createOscillator(), env=ctx.createGain();
+  const eq=ctx.createBiquadFilter();
   mod.type='sine'; car.type='sine';
-  mod.frequency.value=freq*(isBass?1.0:3.5);
-  modG.gain.value=freq*(isBass?0.8:1.8);
-  car.frequency.value=freq;
-  eq.type=isBass?'lowpass':'peaking'; eq.frequency.value=isBass?600:2800;
-  eq.gain.value=isBass?0:3.5; eq.Q.value=2;
-  const sus=Math.max(gain*(isBass?0.55:0.35),0.001);
-  env.gain.setValueAtTime(0,t); env.gain.linearRampToValueAtTime(gain,t+0.003);
-  env.gain.exponentialRampToValueAtTime(sus,t+0.003+dur*0.28);
-  env.gain.exponentialRampToValueAtTime(0.001,t+dur*0.95);
+  mod.frequency.value = freq * (isBass ? 1.0 : 3.5);
+  modG.gain.value     = freq * (isBass ? 0.6 : 1.4);
+  car.frequency.value = freq;
+  eq.type = isBass ? 'lowpass' : 'peaking';
+  eq.frequency.value  = isBass ? 500 : 2600;
+  eq.gain.value = isBass ? 0 : 4; eq.Q.value = 2;
+  // Envelope: attack → hold → slow tail — never release before dur
+  const atk = 0.004;
+  const hold = dur * 0.55;           // stay near peak well past halfway
+  const tail = t + dur + 0.08;       // oscillators always outlast the note
+  env.gain.setValueAtTime(0, t);
+  env.gain.linearRampToValueAtTime(gain, t + atk);
+  env.gain.setValueAtTime(gain, t + hold);
+  env.gain.exponentialRampToValueAtTime(0.001, tail);
   mod.connect(modG); modG.connect(car.frequency);
   car.connect(eq); eq.connect(env); env.connect(S.masterGain);
-  mod.start(t); mod.stop(t+dur+0.05); car.start(t); car.stop(t+dur+0.05);
+  mod.start(t); mod.stop(tail + 0.02);
+  car.start(t); car.stop(tail + 0.02);
 }
 
-// ── Vibraphone (sine + tremolo, metallic decay) ───────────────────────────────
-function playVibraphone(freq, t, dur, gain, isBass) {
-  const ctx=S.audioCtx, osc=ctx.createOscillator(), env=ctx.createGain();
-  const lfo=ctx.createOscillator(), lfoG=ctx.createGain();
-  osc.type='sine'; osc.frequency.value=freq;
-  // Tremolo (vibe motor)
-  lfo.frequency.value=isBass?0:5.5; lfoG.gain.value=gain*0.18;
-  lfo.connect(lfoG); lfoG.connect(env.gain);
-  // Fast attack, long metallic decay
-  env.gain.setValueAtTime(0,t); env.gain.linearRampToValueAtTime(gain,t+0.002);
-  env.gain.exponentialRampToValueAtTime(Math.max(gain*0.25,0.001),t+dur*0.35);
-  env.gain.exponentialRampToValueAtTime(0.001,t+Math.min(dur*1.4,3.5));
-  osc.connect(env); env.connect(S.masterGain);
-  osc.start(t); lfo.start(t);
-  const stop=t+Math.min(dur*1.4,3.5)+0.05;
-  osc.stop(stop); lfo.stop(stop);
-}
-
-// ── Organ (Hammond-ish: 3 drawbars as harmonics) ─────────────────────────────
-function playOrgan(freq, t, dur, gain, isBass) {
-  const ctx=S.audioCtx;
-  const drawbars=[1,2,3]; // 8', 4', 2-2/3' equivalent
-  const weights=[0.5,0.3,0.2];
-  drawbars.forEach((h,i)=>{
-    const osc=ctx.createOscillator(), env=ctx.createGain();
-    osc.type='sine'; osc.frequency.value=freq*h;
-    // Organ: instant on/off (no swell for simplicity)
-    env.gain.setValueAtTime(0,t); env.gain.linearRampToValueAtTime(gain*weights[i],t+0.008);
-    env.gain.setValueAtTime(gain*weights[i],t+dur-0.015);
-    env.gain.linearRampToValueAtTime(0.001,t+dur);
-    osc.connect(env); env.connect(S.masterGain);
-    osc.start(t); osc.stop(t+dur+0.02);
-  });
-}
-
-// ── Clean sine (for minimal / debug) ─────────────────────────────────────────
-function playSine(freq, t, dur, gain) {
-  const ctx=S.audioCtx, osc=ctx.createOscillator(), env=ctx.createGain();
-  osc.type='sine'; osc.frequency.value=freq;
-  env.gain.setValueAtTime(0,t); env.gain.linearRampToValueAtTime(gain,t+0.008);
-  env.gain.exponentialRampToValueAtTime(0.001,t+dur*0.92);
-  osc.connect(env); env.connect(S.masterGain); osc.start(t); osc.stop(t+dur+0.02);
-}
-
-
-// ── Acoustic piano (bright FM + hammer noise transient) ──────────────────────
+// ── Acoustic piano ────────────────────────────────────────────────────────────
 function playPiano(freq, t, dur, gain, isBass) {
-  const ctx=S.audioCtx;
-  // Bright inharmonic string: two slightly detuned sines (unison shimmer)
-  [0, 5].forEach((detCents, di) => {
-    const osc=ctx.createOscillator(), env=ctx.createGain(), filt=ctx.createBiquadFilter();
-    osc.type='sine';
-    osc.frequency.value=freq*Math.pow(2,detCents/1200);
-    filt.type='peaking'; filt.frequency.value=isBass?400:3500; filt.gain.value=isBass?-3:5; filt.Q.value=1.5;
-    const pk=gain*(di===0?1.0:0.35);
-    const decay=isBass?dur*0.55:Math.min(dur*0.9,2.5);
-    env.gain.setValueAtTime(0,t);
-    env.gain.linearRampToValueAtTime(pk,t+0.003);
-    env.gain.exponentialRampToValueAtTime(Math.max(pk*0.18,0.001),t+0.003+decay*0.4);
-    env.gain.exponentialRampToValueAtTime(0.001,t+decay);
+  const ctx = S.audioCtx;
+  // Two detuned sine strings for shimmer
+  [0, 4].forEach((detCents, di) => {
+    const osc = ctx.createOscillator();
+    const env = ctx.createGain();
+    const filt = ctx.createBiquadFilter();
+    osc.type = 'sine';
+    osc.frequency.value = freq * Math.pow(2, detCents / 1200);
+    filt.type = 'peaking';
+    filt.frequency.value = isBass ? 400 : 3200;
+    filt.gain.value = isBass ? -2 : 5; filt.Q.value = 1.5;
+    const pk = gain * (di === 0 ? 1.0 : 0.3);
+    const tail = t + dur + 0.25;        // long piano tail
+    env.gain.setValueAtTime(0, t);
+    env.gain.linearRampToValueAtTime(pk, t + 0.004);
+    env.gain.setValueAtTime(pk * 0.7, t + dur * 0.5); // gradual natural decay
+    env.gain.exponentialRampToValueAtTime(0.001, tail);
     osc.connect(filt); filt.connect(env); env.connect(S.masterGain);
-    osc.start(t); osc.stop(t+decay+0.05);
+    osc.start(t); osc.stop(tail + 0.02);
   });
-  // Soft hammer click
-  const buf=ctx.createBuffer(1,Math.ceil(ctx.sampleRate*0.018),ctx.sampleRate);
-  const d=buf.getChannelData(0);
-  for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*Math.exp(-i/(ctx.sampleRate*0.008));
-  const src=ctx.createBufferSource(),hp=ctx.createBiquadFilter(),eg=ctx.createGain();
-  hp.type='highpass'; hp.frequency.value=2000;
-  src.buffer=buf; eg.gain.value=gain*0.12;
-  src.connect(hp); hp.connect(eg); eg.connect(S.masterGain); src.start(t);
+  // Hammer click transient
+  const buf = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * 0.02), ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++)
+    d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.007));
+  const src = ctx.createBufferSource();
+  const hp  = ctx.createBiquadFilter();
+  const eg  = ctx.createGain();
+  hp.type = 'highpass'; hp.frequency.value = 2200;
+  src.buffer = buf; eg.gain.value = gain * 0.1;
+  src.connect(hp); hp.connect(eg); eg.connect(S.masterGain);
+  src.start(t);
 }
 
-// ── Strings (bowed — slow attack, rich with gentle chorus shimmer) ────────────
+// ── Strings ───────────────────────────────────────────────────────────────────
 function playStrings(freq, t, dur, gain, isBass) {
-  const ctx=S.audioCtx;
-  // Three slightly detuned sawtooths for ensemble width
-  const detunes=[0,-8,8];
-  const mainGain=new GainNode(ctx,{gain:0});
+  const ctx = S.audioCtx;
+  const mainGain = ctx.createGain();   // createGain() — no constructor args
+  mainGain.gain.value = 0;
   mainGain.connect(S.masterGain);
-  detunes.forEach((dt,i)=>{
-    const osc=ctx.createOscillator(), filt=ctx.createBiquadFilter(), g=ctx.createGain();
-    osc.type='sawtooth'; osc.frequency.value=freq; osc.detune.value=dt;
-    filt.type='lowpass'; filt.frequency.value=isBass?800:4000; filt.Q.value=0.7;
-    g.gain.value=i===0?0.55:0.22;
+  const detunes = [0, -7, 7];
+  const weights = [0.55, 0.25, 0.25];
+  const tail = t + dur + 0.18;
+  detunes.forEach((dt, i) => {
+    const osc  = ctx.createOscillator();
+    const filt = ctx.createBiquadFilter();
+    const g    = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.value = freq;
+    osc.detune.value = dt;
+    filt.type = 'lowpass';
+    filt.frequency.value = isBass ? 700 : 3800;
+    filt.Q.value = 0.6;
+    g.gain.value = weights[i];
     osc.connect(filt); filt.connect(g); g.connect(mainGain);
-    osc.start(t); osc.stop(t+dur+0.3);
+    osc.start(t); osc.stop(tail + 0.05);
   });
-  // Slow bow attack, hold, gentle release
-  const attack=Math.min(dur*0.25,0.18);
-  const release=Math.min(dur*0.15,0.12);
-  mainGain.gain.setValueAtTime(0,t);
-  mainGain.gain.linearRampToValueAtTime(gain,t+attack);
-  mainGain.gain.setValueAtTime(gain,t+dur-release);
-  mainGain.gain.linearRampToValueAtTime(0.001,t+dur+0.02);
+  // Bow envelope on the shared gain node — slow attack, hold, release
+  const atk = Math.min(dur * 0.22, 0.16);
+  const rel = Math.min(dur * 0.18, 0.14);
+  mainGain.gain.setValueAtTime(0, t);
+  mainGain.gain.linearRampToValueAtTime(gain, t + atk);
+  mainGain.gain.setValueAtTime(gain, t + dur - rel);
+  mainGain.gain.linearRampToValueAtTime(0.001, tail);
+}
+
+// ── Vibraphone ────────────────────────────────────────────────────────────────
+function playVibraphone(freq, t, dur, gain, isBass) {
+  const ctx = S.audioCtx;
+  const osc  = ctx.createOscillator();
+  const env  = ctx.createGain();
+  // Tremolo via separate amplitude LFO (not connected to env.gain — that fights ramps)
+  const lfoOsc = ctx.createOscillator();
+  const lfoAmt = ctx.createGain();
+  const trem   = ctx.createGain();
+  osc.type = 'sine'; osc.frequency.value = freq;
+  lfoOsc.frequency.value = isBass ? 0 : 5.2;
+  lfoAmt.gain.value = 0.12;   // tremolo depth: ±12% of signal
+  trem.gain.value = 1;
+  // LFO modulates trem.gain, not env.gain
+  lfoOsc.connect(lfoAmt); lfoAmt.connect(trem.gain);
+  // Main envelope — fast attack, natural metallic decay
+  const tail = t + Math.max(dur + 0.5, dur * 1.3);
+  env.gain.setValueAtTime(0, t);
+  env.gain.linearRampToValueAtTime(gain, t + 0.003);
+  env.gain.exponentialRampToValueAtTime(gain * 0.4, t + dur * 0.5);
+  env.gain.exponentialRampToValueAtTime(0.001, tail);
+  osc.connect(env); env.connect(trem); trem.connect(S.masterGain);
+  osc.start(t); osc.stop(tail + 0.05);
+  lfoOsc.start(t); lfoOsc.stop(tail + 0.05);
+}
+
+// ── Organ ─────────────────────────────────────────────────────────────────────
+function playOrgan(freq, t, dur, gain, isBass) {
+  const ctx = S.audioCtx;
+  const tail = t + dur + 0.02;
+  [1, 2, 3].forEach((h, i) => {
+    const osc = ctx.createOscillator();
+    const env = ctx.createGain();
+    const w   = [0.5, 0.3, 0.2][i];
+    osc.type = 'sine'; osc.frequency.value = freq * h;
+    env.gain.setValueAtTime(0, t);
+    env.gain.linearRampToValueAtTime(gain * w, t + 0.008);
+    env.gain.setValueAtTime(gain * w, t + dur - 0.012);
+    env.gain.linearRampToValueAtTime(0.001, tail);
+    osc.connect(env); env.connect(S.masterGain);
+    osc.start(t); osc.stop(tail + 0.02);
+  });
+}
+
+// ── Sine ──────────────────────────────────────────────────────────────────────
+function playSine(freq, t, dur, gain) {
+  const ctx = S.audioCtx;
+  const osc = ctx.createOscillator();
+  const env = ctx.createGain();
+  const tail = t + dur + 0.05;
+  osc.type = 'sine'; osc.frequency.value = freq;
+  env.gain.setValueAtTime(0, t);
+  env.gain.linearRampToValueAtTime(gain, t + 0.008);
+  env.gain.setValueAtTime(gain * 0.8, t + dur * 0.6);
+  env.gain.exponentialRampToValueAtTime(0.001, tail);
+  osc.connect(env); env.connect(S.masterGain);
+  osc.start(t); osc.stop(tail + 0.02);
 }
 
 // ── Dispatcher ────────────────────────────────────────────────────────────────
