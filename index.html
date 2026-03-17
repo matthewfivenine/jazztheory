@@ -984,6 +984,35 @@ function resetHarmonizer(){
 }
 
 
+function playBrush(t, dur, gain, hpFreq) {
+  const ctx=S.audioCtx;
+  const samples=Math.ceil(ctx.sampleRate*dur);
+  const buf=ctx.createBuffer(1,samples,ctx.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<samples;i++) d[i]=(Math.random()*2-1)*Math.exp(-i/(ctx.sampleRate*dur*0.35));
+  const src=ctx.createBufferSource(),hp=ctx.createBiquadFilter(),lp=ctx.createBiquadFilter(),env=ctx.createGain();
+  hp.type='highpass'; hp.frequency.value=hpFreq;
+  lp.type='lowpass';  lp.frequency.value=14000;
+  src.buffer=buf;
+  env.gain.setValueAtTime(gain,t); env.gain.exponentialRampToValueAtTime(0.001,t+dur);
+  src.connect(hp); hp.connect(lp); lp.connect(env); env.connect(S.masterGain); src.start(t);
+}
+function playKick(t) {
+  const ctx=S.audioCtx,osc=ctx.createOscillator(),env=ctx.createGain();
+  osc.type='sine';
+  osc.frequency.setValueAtTime(90,t); osc.frequency.exponentialRampToValueAtTime(38,t+0.12);
+  env.gain.setValueAtTime(0,t); env.gain.linearRampToValueAtTime(0.36,t+0.004); env.gain.exponentialRampToValueAtTime(0.001,t+0.26);
+  osc.connect(env); env.connect(S.masterGain); osc.start(t); osc.stop(t+0.3);
+  playBrush(t,0.04,0.05,80);
+}
+function playSnare(t) {
+  playBrush(t,0.10,0.08,1800);
+  const ctx=S.audioCtx,osc=ctx.createOscillator(),env=ctx.createGain();
+  osc.type='triangle'; osc.frequency.value=210;
+  env.gain.setValueAtTime(0,t); env.gain.linearRampToValueAtTime(0.055,t+0.003); env.gain.exponentialRampToValueAtTime(0.001,t+0.08);
+  osc.connect(env); env.connect(S.masterGain); osc.start(t); osc.stop(t+0.09);
+}
+
 function scheduleBeat(t){
   if(!S.current?.measures?.length) return;
   const ms=S.current.measures,spb=60/S.tempo;
@@ -1011,7 +1040,7 @@ function scheduleBeat(t){
 
 function scheduler(){
   const spb=60/S.tempo;
-  while(S.nextBeatTime<S.audioCtx.currentTime+0.1){scheduleBeat(S.nextBeatTime);S.nextBeatTime+=spb;S.beatCount++;}
+  while(S.nextBeatTime<S.audioCtx.currentTime+0.3){scheduleBeat(S.nextBeatTime);S.nextBeatTime+=spb;S.beatCount++;}
   updateBeatUI();
 }
 function updateBeatUI(){
@@ -1185,6 +1214,14 @@ document.getElementById('settings-btn').addEventListener('click',()=>{
 document.getElementById('modal-cancel').addEventListener('click',()=>document.getElementById('settings-modal').classList.remove('open'));
 window.addEventListener('resize',()=>{if(S.current)drawAllCellStaves(S.current.measures||[]);});
 document.addEventListener('click',e=>{if(!e.target.closest('.search-area'))document.getElementById('search-results').style.display='none';});
+
+
+// Resume AudioContext when tab becomes visible (browser throttles suspended tabs)
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && S.audioCtx && S.audioCtx.state === 'suspended') {
+    S.audioCtx.resume();
+  }
+});
 
 // ════════════════════════════════════════════════════════════
 //  Init — load library on page load
